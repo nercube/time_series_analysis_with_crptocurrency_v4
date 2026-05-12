@@ -2,7 +2,6 @@ import datetime as dt
 from pathlib import Path
 
 import joblib
-
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -44,6 +43,7 @@ CRYPTO_CONFIG = {
         "lstm": "btc_lstm_logreturn_multifeature.h5",
         "scaler": "btc_feature_scaler.pkl",
     },
+
     "Ethereum (ETH)": {
         "ticker": "ETH-USD",
         "data": "eth.csv",
@@ -53,6 +53,7 @@ CRYPTO_CONFIG = {
         "lstm": "eth_lstm (1).h5",
         "scaler": "eth_scaler (1).pkl",
     },
+
     "Tether (USDT)": {
         "ticker": "USDT-USD",
         "data": "usdt.csv",
@@ -65,7 +66,7 @@ CRYPTO_CONFIG = {
 }
 
 # =========================================================
-# STREAMLIT PAGE
+# STREAMLIT SETTINGS
 # =========================================================
 
 st.set_page_config(
@@ -81,6 +82,7 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+
 body {
     background-color: #020617;
 }
@@ -100,6 +102,7 @@ body {
 [data-testid="stSidebar"] {
     background: #020617;
 }
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -109,14 +112,16 @@ body {
 # HELPERS
 # =========================================================
 
-
 def compute_rsi(close: pd.Series, period: int = 14):
+
     delta = close.diff()
 
     gain = delta.clip(lower=0)
+
     loss = -delta.clip(upper=0)
 
     avg_gain = gain.rolling(period).mean()
+
     avg_loss = loss.rolling(period).mean()
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
@@ -127,6 +132,7 @@ def compute_rsi(close: pd.Series, period: int = 14):
 
 
 def create_features(df: pd.DataFrame):
+
     feat = df.copy()
 
     feat["log_return"] = np.log(
@@ -143,6 +149,11 @@ def create_features(df: pd.DataFrame):
 
     feat["rsi14"] = compute_rsi(feat["Close"])
 
+    feat = feat.replace(
+        [np.inf, -np.inf],
+        np.nan
+    )
+
     feat = feat.dropna()
 
     return feat
@@ -154,6 +165,7 @@ def make_lstm_sequence(
     scaler,
     window_size=60,
 ):
+
     X_raw = feat_df[feature_cols].values
 
     X_scaled = scaler.transform(X_raw)
@@ -166,8 +178,8 @@ def make_lstm_sequence(
 
 
 def _load_pickle(path: Path):
-    return joblib.load(path)
 
+    return joblib.load(path)
 
 # =========================================================
 # DATA LOADING
@@ -188,8 +200,29 @@ def load_price_history(crypto_key: str):
 
     df.index = df.index.tz_localize(None)
 
-    return df
+    numeric_cols = [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume",
+    ]
 
+    for col in numeric_cols:
+
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        )
+
+    df = df.replace(
+        [np.inf, -np.inf],
+        np.nan
+    )
+
+    df = df.dropna()
+
+    return df
 
 # =========================================================
 # MODEL LOADING
@@ -197,6 +230,7 @@ def load_price_history(crypto_key: str):
 
 @st.cache_resource
 def load_models(crypto_key: str):
+
     cfg = CRYPTO_CONFIG[crypto_key]
 
     arima_model = _load_pickle(
@@ -223,51 +257,28 @@ def load_models(crypto_key: str):
         scaler,
     )
 
-
 # =========================================================
 # PREDICTIONS
 # =========================================================
 
-
 def predict_arima(model, horizon):
-    preds = model.predict(n_periods=horizon)
 
-    return np.asarray(preds, dtype=float)
-
-
-def predict_prophet(model, hist_df, horizon):
-
-    hist_df = hist_df.copy()
-
-    # =====================================================
-    # Force numeric cleanup
-    # =====================================================
-
-    numeric_cols = [
-        "Open",
-        "High",
-        "Low",
-        "Close",
-        "Volume",
-    ]
-
-    for col in numeric_cols:
-
-        hist_df[col] = pd.to_numeric(
-            hist_df[col],
-            errors="coerce"
-        )
-
-    hist_df = hist_df.replace(
-        [np.inf, -np.inf],
-        np.nan
+    preds = model.predict(
+        n_periods=horizon
     )
 
-    hist_df = hist_df.dropna()
+    return np.asarray(
+        preds,
+        dtype=float
+    )
 
-    # =====================================================
-    # Base Prophet dataframe
-    # =====================================================
+
+def predict_prophet(
+    model,
+    hist_df,
+    horizon,
+    crypto_key,
+):
 
     prophet_df = pd.DataFrame({
         "ds": hist_df.index,
@@ -275,44 +286,45 @@ def predict_prophet(model, hist_df, horizon):
     })
 
     # =====================================================
-    # BTC regressors
+    # BITCOIN ONLY REGRESSORS
     # =====================================================
 
-    prophet_df["returns"] = (
-        hist_df["Close"]
-        .pct_change()
-    )
+    if crypto_key == "Bitcoin (BTC)":
 
-    prophet_df["log_returns"] = (
-        np.log(hist_df["Close"])
-        .diff()
-    )
-
-    prophet_df["volatility"] = (
-        hist_df["High"]
-        - hist_df["Low"]
-    )
-
-    prophet_df["volume_norm"] = (
-        (
-            hist_df["Volume"]
-            - hist_df["Volume"].mean()
+        prophet_df["returns"] = (
+            hist_df["Close"]
+            .pct_change()
+            .fillna(0)
         )
-        / (
-            hist_df["Volume"].std()
-            + 1e-9
+
+        prophet_df["log_returns"] = (
+            np.log(hist_df["Close"])
+            .diff()
+            .fillna(0)
         )
-    )
 
-    prophet_df["ma7"] = (
-        hist_df["Close"]
-        .rolling(7)
-        .mean()
-    )
+        prophet_df["volatility"] = (
+            hist_df["High"]
+            - hist_df["Low"]
+        )
 
-    # =====================================================
-    # FINAL NaN cleanup
-    # =====================================================
+        prophet_df["volume_norm"] = (
+            (
+                hist_df["Volume"]
+                - hist_df["Volume"].mean()
+            )
+            / (
+                hist_df["Volume"].std()
+                + 1e-9
+            )
+        )
+
+        prophet_df["ma7"] = (
+            hist_df["Close"]
+            .rolling(7)
+            .mean()
+            .bfill()
+        )
 
     prophet_df = prophet_df.replace(
         [np.inf, -np.inf],
@@ -323,46 +335,51 @@ def predict_prophet(model, hist_df, horizon):
 
     prophet_df = prophet_df.dropna()
 
-    # =====================================================
-    # Future dataframe
-    # =====================================================
+    if prophet_df.empty:
+
+        raise ValueError(
+            "Prophet dataframe became empty."
+        )
 
     future = model.make_future_dataframe(
         periods=horizon,
         freq="D",
     )
 
-    last_row = prophet_df.iloc[-1]
-
-    future["returns"] = float(
-        last_row["returns"]
-    )
-
-    future["log_returns"] = float(
-        last_row["log_returns"]
-    )
-
-    future["volatility"] = float(
-        last_row["volatility"]
-    )
-
-    future["volume_norm"] = float(
-        last_row["volume_norm"]
-    )
-
-    future["ma7"] = float(
-        last_row["ma7"]
-    )
-
     # =====================================================
-    # Forecast
+    # BTC REGRESSORS
     # =====================================================
+
+    if crypto_key == "Bitcoin (BTC)":
+
+        last_row = prophet_df.iloc[-1]
+
+        future["returns"] = float(
+            last_row["returns"]
+        )
+
+        future["log_returns"] = float(
+            last_row["log_returns"]
+        )
+
+        future["volatility"] = float(
+            last_row["volatility"]
+        )
+
+        future["volume_norm"] = float(
+            last_row["volume_norm"]
+        )
+
+        future["ma7"] = float(
+            last_row["ma7"]
+        )
 
     forecast = model.predict(future)
 
     preds = forecast["yhat"].tail(horizon)
 
     return preds.to_numpy(dtype=float)
+
 
 def predict_lstm(
     model,
@@ -371,6 +388,7 @@ def predict_lstm(
     horizon,
     window_size=60,
 ):
+
     future_df = hist_df.copy()
 
     predictions = []
@@ -381,7 +399,9 @@ def predict_lstm(
 
     for _ in range(horizon):
 
-        feat_df = create_features(future_df)
+        feat_df = create_features(
+            future_df
+        )
 
         X_last = make_lstm_sequence(
             feat_df,
@@ -391,10 +411,16 @@ def predict_lstm(
         )
 
         pred_log_return = float(
-            model.predict(X_last, verbose=0)[0][0]
+            model.predict(
+                X_last,
+                verbose=0
+            )[0][0]
         )
 
-        next_close = current_close * np.exp(pred_log_return)
+        next_close = (
+            current_close
+            * np.exp(pred_log_return)
+        )
 
         predictions.append(next_close)
 
@@ -416,25 +442,27 @@ def predict_lstm(
 
     return np.array(predictions)
 
-
 # =========================================================
 # MARKET SNAPSHOT
 # =========================================================
 
 @st.cache_data(ttl=60)
 def fetch_market_snapshot(coin_id: str):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+
+    url = (
+        "https://api.coingecko.com/api/v3/simple/price"
+    )
 
     params = {
-        "localization": "false",
-        "tickers": "false",
-        "market_data": "true",
-        "community_data": "false",
-        "developer_data": "false",
-        "sparkline": "false",
+        "ids": coin_id,
+        "vs_currencies": "usd",
+        "include_market_cap": "true",
+        "include_24hr_vol": "true",
+        "include_24hr_change": "true",
     }
 
     try:
+
         r = requests.get(
             url,
             params=params,
@@ -443,34 +471,60 @@ def fetch_market_snapshot(coin_id: str):
 
         r.raise_for_status()
 
-        data = r.json()["market_data"]
+        data = r.json()[coin_id]
 
         return {
-            "price": data["current_price"]["usd"],
-            "change_24h": data.get(
-                "price_change_percentage_24h",
+
+            "price": data.get(
+                "usd",
                 0.0,
             ),
-            "high_24h": data["high_24h"]["usd"],
-            "low_24h": data["low_24h"]["usd"],
-            "volume_24h": data["total_volume"]["usd"],
-            "market_cap": data["market_cap"]["usd"],
+
+            "change_24h": data.get(
+                "usd_24h_change",
+                0.0,
+            ),
+
+            "high_24h": 0.0,
+
+            "low_24h": 0.0,
+
+            "volume_24h": data.get(
+                "usd_24h_vol",
+                0.0,
+            ),
+
+            "market_cap": data.get(
+                "usd_market_cap",
+                0.0,
+            ),
         }
 
-    except Exception:
-        return None
+    except Exception as e:
 
+        st.write(
+            "Snapshot Error:",
+            e
+        )
+
+        try:
+            st.write(r.text)
+        except:
+            pass
+
+        return None
 
 # =========================================================
 # MAIN PAGE
 # =========================================================
 
-
 def render_dashboard(crypto_key: str):
 
     cfg = CRYPTO_CONFIG[crypto_key]
 
-    st.title(f"{crypto_key} Forecast Dashboard")
+    st.title(
+        f"{crypto_key} Forecast Dashboard"
+    )
 
     with st.sidebar:
 
@@ -498,31 +552,39 @@ def render_dashboard(crypto_key: str):
             value=True,
         )
 
-    price_df = load_price_history(crypto_key)
+    price_df = load_price_history(
+        crypto_key
+    )
 
     (
         arima_model,
         prophet_model,
         lstm_model,
         scaler,
-    ) = load_models(crypto_key)
+    ) = load_models(
+        crypto_key
+    )
 
     preds = {}
 
     if use_arima:
+
         preds["ARIMA"] = predict_arima(
             arima_model,
             horizon,
         )
 
     if use_prophet:
+
         preds["Prophet"] = predict_prophet(
             prophet_model,
             price_df,
             horizon,
+            crypto_key,
         )
 
     if use_lstm:
+
         preds["LSTM"] = predict_lstm(
             lstm_model,
             scaler,
@@ -535,9 +597,15 @@ def render_dashboard(crypto_key: str):
         gap="large",
     )
 
+    # =====================================================
+    # LEFT COLUMN
+    # =====================================================
+
     with left_col:
 
-        st.subheader("Price + Forecast")
+        st.subheader(
+            "Price + Forecast"
+        )
 
         recent = price_df.tail(120)
 
@@ -562,7 +630,10 @@ def render_dashboard(crypto_key: str):
 
         future_dates = [
             last_date + dt.timedelta(days=i)
-            for i in range(1, horizon + 1)
+            for i in range(
+                1,
+                horizon + 1
+            )
         ]
 
         for model_name, values in preds.items():
@@ -570,7 +641,8 @@ def render_dashboard(crypto_key: str):
             fig.add_trace(
                 go.Scatter(
                     x=[last_date] + future_dates,
-                    y=[last_close] + values.tolist(),
+                    y=[last_close]
+                    + values.tolist(),
                     mode="lines",
                     name=model_name,
                 )
@@ -581,7 +653,9 @@ def render_dashboard(crypto_key: str):
             xaxis_rangeslider_visible=False,
             plot_bgcolor="rgba(15,23,42,0.95)",
             paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e5e7eb"),
+            font=dict(
+                color="#e5e7eb"
+            ),
         )
 
         st.markdown(
@@ -591,17 +665,26 @@ def render_dashboard(crypto_key: str):
 
         st.plotly_chart(
             fig,
-            use_container_width=True,
+            width="stretch",
         )
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
-        st.subheader("Predicted Prices")
+        st.subheader(
+            "Predicted Prices"
+        )
 
         if preds:
 
             table = pd.DataFrame({
-                "Model": list(preds.keys()),
+
+                "Model": list(
+                    preds.keys()
+                ),
+
                 "Predicted Close (USD)": [
                     float(v[-1])
                     for v in preds.values()
@@ -612,12 +695,18 @@ def render_dashboard(crypto_key: str):
                 table.style.format({
                     "Predicted Close (USD)": "${:,.2f}"
                 }),
-                use_container_width=True,
+                width="stretch",
             )
+
+    # =====================================================
+    # RIGHT COLUMN
+    # =====================================================
 
     with right_col:
 
-        st.subheader("Market Snapshot")
+        st.subheader(
+            "Market Snapshot"
+        )
 
         snapshot = fetch_market_snapshot(
             cfg["coingecko"]
@@ -632,31 +721,22 @@ def render_dashboard(crypto_key: str):
 
             st.metric(
                 "Price",
-                f"${snapshot['price']:,.2f}",
-                f"{snapshot['change_24h']:.2f}%",
-            )
-
-            st.metric(
-                "24h High",
-                f"${snapshot['high_24h']:,.2f}",
-            )
-
-            st.metric(
-                "24h Low",
-                f"${snapshot['low_24h']:,.2f}",
+                f"${snapshot['price']:,.4f}",
+                f"{snapshot['change_24h']:.2f}%"
             )
 
             st.metric(
                 "24h Volume",
-                f"${snapshot['volume_24h']:,.0f}",
+                f"${snapshot['volume_24h']:,.0f}"
             )
 
             st.metric(
                 "Market Cap",
-                f"${snapshot['market_cap']:,.0f}",
+                f"${snapshot['market_cap']:,.0f}"
             )
 
         else:
+
             st.warning(
                 "Could not load market snapshot."
             )
@@ -666,6 +746,9 @@ def render_dashboard(crypto_key: str):
             unsafe_allow_html=True,
         )
 
+# =========================================================
+# APP ENTRY
+# =========================================================
 
 selected_crypto = st.sidebar.radio(
     "Choose Cryptocurrency",
