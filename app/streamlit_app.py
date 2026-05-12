@@ -34,33 +34,55 @@ FEATURE_COLUMNS = [
 ]
 
 CRYPTO_CONFIG = {
+
     "Bitcoin (BTC)": {
+
         "ticker": "BTC-USD",
+
         "data": "btc.csv",
+
         "coingecko": "bitcoin",
+
         "arima": "arima_model.pkl",
+
         "prophet": "prophet_model.pkl",
+
         "lstm": "btc_lstm_logreturn_multifeature.h5",
+
         "scaler": "btc_feature_scaler.pkl",
     },
 
     "Ethereum (ETH)": {
+
         "ticker": "ETH-USD",
+
         "data": "eth.csv",
+
         "coingecko": "ethereum",
+
         "arima": "eth_arima.pkl",
+
         "prophet": "eth_prophet (1).pkl",
+
         "lstm": "eth_lstm (1).h5",
+
         "scaler": "eth_scaler (1).pkl",
     },
 
     "Tether (USDT)": {
+
         "ticker": "USDT-USD",
+
         "data": "usdt.csv",
+
         "coingecko": "tether",
+
         "arima": "usdt_arima.pkl",
+
         "prophet": "usdt_prophet (1).pkl",
+
         "lstm": "usdt_lstm (1).h5",
+
         "scaler": "usdt_scaler.pkl",
     },
 }
@@ -112,7 +134,10 @@ body {
 # HELPERS
 # =========================================================
 
-def compute_rsi(close: pd.Series, period: int = 14):
+def compute_rsi(
+    close: pd.Series,
+    period: int = 14
+):
 
     delta = close.diff()
 
@@ -124,30 +149,48 @@ def compute_rsi(close: pd.Series, period: int = 14):
 
     avg_loss = loss.rolling(period).mean()
 
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rs = avg_gain / avg_loss.replace(
+        0,
+        np.nan
+    )
 
     rsi = 100 - (100 / (1 + rs))
 
     return rsi.fillna(50)
 
 
-def create_features(df: pd.DataFrame):
+def create_features(
+    df: pd.DataFrame
+):
 
     feat = df.copy()
 
     feat["log_return"] = np.log(
-        feat["Close"] / feat["Close"].shift(1)
+        feat["Close"]
+        / feat["Close"].shift(1)
     )
 
-    feat["ma7"] = feat["Close"].rolling(7).mean()
+    feat["ma7"] = (
+        feat["Close"]
+        .rolling(7)
+        .mean()
+    )
 
-    feat["ma21"] = feat["Close"].rolling(21).mean()
+    feat["ma21"] = (
+        feat["Close"]
+        .rolling(21)
+        .mean()
+    )
 
     feat["volatility_7"] = (
-        feat["log_return"].rolling(7).std()
+        feat["log_return"]
+        .rolling(7)
+        .std()
     )
 
-    feat["rsi14"] = compute_rsi(feat["Close"])
+    feat["rsi14"] = compute_rsi(
+        feat["Close"]
+    )
 
     feat = feat.replace(
         [np.inf, -np.inf],
@@ -166,13 +209,22 @@ def make_lstm_sequence(
     window_size=60,
 ):
 
-    X_raw = feat_df[feature_cols].values
+    X_raw = feat_df[
+        feature_cols
+    ].values
 
-    X_scaled = scaler.transform(X_raw)
+    X_scaled = scaler.transform(
+        X_raw
+    )
 
-    last_window = X_scaled[-window_size:]
+    last_window = X_scaled[
+        -window_size:
+    ]
 
-    X = np.expand_dims(last_window, axis=0)
+    X = np.expand_dims(
+        last_window,
+        axis=0
+    )
 
     return X
 
@@ -186,19 +238,33 @@ def _load_pickle(path: Path):
 # =========================================================
 
 @st.cache_data(ttl=600)
-def load_price_history(crypto_key: str):
+def load_price_history(
+    crypto_key: str
+):
 
-    cfg = CRYPTO_CONFIG[crypto_key]
+    cfg = CRYPTO_CONFIG[
+        crypto_key
+    ]
 
-    csv_path = DATA_DIR / cfg["data"]
+    csv_path = (
+        DATA_DIR
+        / cfg["data"]
+    )
 
     df = pd.read_csv(csv_path)
 
-    df["Date"] = pd.to_datetime(df["Date"])
+    df["Date"] = pd.to_datetime(
+        df["Date"]
+    )
 
-    df.set_index("Date", inplace=True)
+    df.set_index(
+        "Date",
+        inplace=True
+    )
 
-    df.index = df.index.tz_localize(None)
+    df.index = df.index.tz_localize(
+        None
+    )
 
     numeric_cols = [
         "Open",
@@ -229,25 +295,33 @@ def load_price_history(crypto_key: str):
 # =========================================================
 
 @st.cache_resource
-def load_models(crypto_key: str):
+def load_models(
+    crypto_key: str
+):
 
-    cfg = CRYPTO_CONFIG[crypto_key]
+    cfg = CRYPTO_CONFIG[
+        crypto_key
+    ]
 
     arima_model = _load_pickle(
-        MODELS_DIR / cfg["arima"]
+        MODELS_DIR
+        / cfg["arima"]
     )
 
     prophet_model = _load_pickle(
-        MODELS_DIR / cfg["prophet"]
+        MODELS_DIR
+        / cfg["prophet"]
     )
 
     lstm_model = load_model(
-        MODELS_DIR / cfg["lstm"],
+        MODELS_DIR
+        / cfg["lstm"],
         compile=False
     )
 
     scaler = _load_pickle(
-        MODELS_DIR / cfg["scaler"]
+        MODELS_DIR
+        / cfg["scaler"]
     )
 
     return (
@@ -261,7 +335,10 @@ def load_models(crypto_key: str):
 # PREDICTIONS
 # =========================================================
 
-def predict_arima(model, horizon):
+def predict_arima(
+    model,
+    horizon
+):
 
     preds = model.predict(
         n_periods=horizon
@@ -280,105 +357,22 @@ def predict_prophet(
     crypto_key,
 ):
 
-    prophet_df = pd.DataFrame({
-        "ds": hist_df.index,
-        "y": hist_df["Close"].values,
-    })
-
-    # =====================================================
-    # BITCOIN ONLY REGRESSORS
-    # =====================================================
-
-    if crypto_key == "Bitcoin (BTC)":
-
-        prophet_df["returns"] = (
-            hist_df["Close"]
-            .pct_change()
-            .fillna(0)
-        )
-
-        prophet_df["log_returns"] = (
-            np.log(hist_df["Close"])
-            .diff()
-            .fillna(0)
-        )
-
-        prophet_df["volatility"] = (
-            hist_df["High"]
-            - hist_df["Low"]
-        )
-
-        prophet_df["volume_norm"] = (
-            (
-                hist_df["Volume"]
-                - hist_df["Volume"].mean()
-            )
-            / (
-                hist_df["Volume"].std()
-                + 1e-9
-            )
-        )
-
-        prophet_df["ma7"] = (
-            hist_df["Close"]
-            .rolling(7)
-            .mean()
-            .bfill()
-        )
-
-    prophet_df = prophet_df.replace(
-        [np.inf, -np.inf],
-        np.nan
-    )
-
-    prophet_df = prophet_df.bfill().ffill()
-
-    prophet_df = prophet_df.dropna()
-
-    if prophet_df.empty:
-
-        raise ValueError(
-            "Prophet dataframe became empty."
-        )
-
     future = model.make_future_dataframe(
         periods=horizon,
         freq="D",
     )
 
-    # =====================================================
-    # BTC REGRESSORS
-    # =====================================================
+    forecast = model.predict(
+        future
+    )
 
-    if crypto_key == "Bitcoin (BTC)":
+    preds = forecast[
+        "yhat"
+    ].tail(horizon)
 
-        last_row = prophet_df.iloc[-1]
-
-        future["returns"] = float(
-            last_row["returns"]
-        )
-
-        future["log_returns"] = float(
-            last_row["log_returns"]
-        )
-
-        future["volatility"] = float(
-            last_row["volatility"]
-        )
-
-        future["volume_norm"] = float(
-            last_row["volume_norm"]
-        )
-
-        future["ma7"] = float(
-            last_row["ma7"]
-        )
-
-    forecast = model.predict(future)
-
-    preds = forecast["yhat"].tail(horizon)
-
-    return preds.to_numpy(dtype=float)
+    return preds.to_numpy(
+        dtype=float
+    )
 
 
 def predict_lstm(
@@ -422,21 +416,28 @@ def predict_lstm(
             * np.exp(pred_log_return)
         )
 
-        predictions.append(next_close)
+        predictions.append(
+            next_close
+        )
 
         next_date = (
             future_df.index[-1]
             + dt.timedelta(days=1)
         )
 
-        new_row = future_df.iloc[-1].copy()
+        new_row = (
+            future_df.iloc[-1]
+            .copy()
+        )
 
         new_row["Close"] = next_close
         new_row["Open"] = next_close
         new_row["High"] = next_close
         new_row["Low"] = next_close
 
-        future_df.loc[next_date] = new_row
+        future_df.loc[
+            next_date
+        ] = new_row
 
         current_close = next_close
 
@@ -447,17 +448,24 @@ def predict_lstm(
 # =========================================================
 
 @st.cache_data(ttl=60)
-def fetch_market_snapshot(coin_id: str):
+def fetch_market_snapshot(
+    coin_id: str
+):
 
     url = (
         "https://api.coingecko.com/api/v3/simple/price"
     )
 
     params = {
+
         "ids": coin_id,
+
         "vs_currencies": "usd",
+
         "include_market_cap": "true",
+
         "include_24hr_vol": "true",
+
         "include_24hr_change": "true",
     }
 
@@ -485,10 +493,6 @@ def fetch_market_snapshot(coin_id: str):
                 0.0,
             ),
 
-            "high_24h": 0.0,
-
-            "low_24h": 0.0,
-
             "volume_24h": data.get(
                 "usd_24h_vol",
                 0.0,
@@ -500,17 +504,7 @@ def fetch_market_snapshot(coin_id: str):
             ),
         }
 
-    except Exception as e:
-
-        st.write(
-            "Snapshot Error:",
-            e
-        )
-
-        try:
-            st.write(r.text)
-        except:
-            pass
+    except Exception:
 
         return None
 
@@ -518,9 +512,13 @@ def fetch_market_snapshot(coin_id: str):
 # MAIN PAGE
 # =========================================================
 
-def render_dashboard(crypto_key: str):
+def render_dashboard(
+    crypto_key: str
+):
 
-    cfg = CRYPTO_CONFIG[crypto_key]
+    cfg = CRYPTO_CONFIG[
+        crypto_key
+    ]
 
     st.title(
         f"{crypto_key} Forecast Dashboard"
@@ -528,7 +526,9 @@ def render_dashboard(crypto_key: str):
 
     with st.sidebar:
 
-        st.header("Controls")
+        st.header(
+            "Controls"
+        )
 
         horizon = st.slider(
             "Forecast horizon (days)",
@@ -569,27 +569,33 @@ def render_dashboard(crypto_key: str):
 
     if use_arima:
 
-        preds["ARIMA"] = predict_arima(
-            arima_model,
-            horizon,
+        preds["ARIMA"] = (
+            predict_arima(
+                arima_model,
+                horizon,
+            )
         )
 
     if use_prophet:
 
-        preds["Prophet"] = predict_prophet(
-            prophet_model,
-            price_df,
-            horizon,
-            crypto_key,
+        preds["Prophet"] = (
+            predict_prophet(
+                prophet_model,
+                price_df,
+                horizon,
+                crypto_key,
+            )
         )
 
     if use_lstm:
 
-        preds["LSTM"] = predict_lstm(
-            lstm_model,
-            scaler,
-            price_df,
-            horizon,
+        preds["LSTM"] = (
+            predict_lstm(
+                lstm_model,
+                scaler,
+                price_df,
+                horizon,
+            )
         )
 
     left_col, right_col = st.columns(
@@ -622,14 +628,20 @@ def render_dashboard(crypto_key: str):
             )
         )
 
-        last_date = price_df.index[-1]
+        last_date = (
+            price_df.index[-1]
+        )
 
         last_close = float(
-            price_df["Close"].iloc[-1]
+            price_df["Close"]
+            .iloc[-1]
         )
 
         future_dates = [
-            last_date + dt.timedelta(days=i)
+
+            last_date
+            + dt.timedelta(days=i)
+
             for i in range(
                 1,
                 horizon + 1
@@ -640,10 +652,14 @@ def render_dashboard(crypto_key: str):
 
             fig.add_trace(
                 go.Scatter(
-                    x=[last_date] + future_dates,
+                    x=[last_date]
+                    + future_dates,
+
                     y=[last_close]
                     + values.tolist(),
+
                     mode="lines",
+
                     name=model_name,
                 )
             )
@@ -665,7 +681,7 @@ def render_dashboard(crypto_key: str):
 
         st.plotly_chart(
             fig,
-            width="stretch",
+            use_container_width=True,
         )
 
         st.markdown(
@@ -686,16 +702,20 @@ def render_dashboard(crypto_key: str):
                 ),
 
                 "Predicted Close (USD)": [
+
                     float(v[-1])
+
                     for v in preds.values()
                 ]
             })
 
             st.dataframe(
                 table.style.format({
+
                     "Predicted Close (USD)": "${:,.2f}"
+
                 }),
-                width="stretch",
+                use_container_width=True,
             )
 
     # =====================================================
@@ -755,4 +775,6 @@ selected_crypto = st.sidebar.radio(
     list(CRYPTO_CONFIG.keys()),
 )
 
-render_dashboard(selected_crypto)
+render_dashboard(
+    selected_crypto
+)
